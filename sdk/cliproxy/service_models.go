@@ -138,6 +138,9 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 			}
 		}
 		models = applyExcludedModels(models, excluded)
+	case "opencode-go", "opencodego":
+		models = buildOpenCodeGoModels()
+		models = applyExcludedModels(models, excluded)
 	case "kimi":
 		models = registry.GetKimiModels()
 		models = applyExcludedModels(models, excluded)
@@ -270,6 +273,43 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 	}
 
 	GlobalModelRegistry().UnregisterClient(a.ID)
+}
+
+func buildOpenCodeGoModels() []*ModelInfo {
+	ids := []string{
+		"minimax-m3",
+		"minimax-m2.7",
+		"minimax-m2.5",
+		"kimi-k2.7-code",
+		"kimi-k2.6",
+		"kimi-k2.5",
+		"glm-5.2",
+		"glm-5.1",
+		"glm-5",
+		"deepseek-v4-pro",
+		"deepseek-v4-flash",
+		"qwen3.7-max",
+		"qwen3.7-plus",
+		"qwen3.6-plus",
+		"qwen3.5-plus",
+		"mimo-v2-pro",
+		"mimo-v2-omni",
+		"mimo-v2.5-pro",
+		"mimo-v2.5",
+		"hy3-preview",
+	}
+	models := make([]*ModelInfo, 0, len(ids))
+	for _, id := range ids {
+		models = append(models, &ModelInfo{
+			ID:          id,
+			Object:      "model",
+			Created:     1783067807,
+			OwnedBy:     "opencode",
+			Type:        "openai",
+			DisplayName: id,
+		})
+	}
+	return models
 }
 
 // refreshModelRegistrationForAuth re-applies the latest model registration for

@@ -196,6 +196,7 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) ([
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
+	applyFileAuthRuntimeAttributes(a, provider, metadata)
 	// Read priority from auth file.
 	if rawPriority, ok := metadata["priority"]; ok {
 		switch v := rawPriority.(type) {
@@ -233,6 +234,38 @@ func synthesizeFileAuths(ctx *SynthesisContext, fullPath string, data []byte) ([
 		}
 	}
 	return []*coreauth.Auth{a}, nil
+}
+
+func isOpenCodeGoProvider(provider string) bool {
+	switch strings.NewReplacer("_", "-", " ", "-").Replace(strings.ToLower(strings.TrimSpace(provider))) {
+	case "opencode-go", "opencodego":
+		return true
+	default:
+		return false
+	}
+}
+
+func applyFileAuthRuntimeAttributes(auth *coreauth.Auth, sourceProvider string, metadata map[string]any) {
+	if auth == nil {
+		return
+	}
+	if auth.Attributes == nil {
+		auth.Attributes = make(map[string]string)
+	}
+	if !isOpenCodeGoProvider(sourceProvider) {
+		return
+	}
+	auth.Attributes["plan_type"] = "go"
+	for _, key := range []string{"api_key", "base_url", "workspace_id", "auth_cookie"} {
+		if value, ok := metadata[key].(string); ok {
+			if trimmed := strings.TrimSpace(value); trimmed != "" {
+				auth.Attributes[key] = trimmed
+			}
+		}
+	}
+	if strings.TrimSpace(auth.Attributes["base_url"]) == "" {
+		auth.Attributes["base_url"] = "https://opencode.ai/zen/go/v1"
+	}
 }
 
 func parsePluginFileAuths(parser PluginAuthParser, req pluginapi.AuthParseRequest) ([]*coreauth.Auth, bool, error) {

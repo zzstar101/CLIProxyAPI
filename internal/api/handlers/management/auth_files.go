@@ -308,12 +308,13 @@ func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth) gin.H {
 	if name == "" {
 		name = auth.ID
 	}
+	provider := strings.TrimSpace(auth.Provider)
 	entry := gin.H{
 		"id":             auth.ID,
 		"auth_index":     auth.Index,
 		"name":           name,
-		"type":           strings.TrimSpace(auth.Provider),
-		"provider":       strings.TrimSpace(auth.Provider),
+		"type":           provider,
+		"provider":       provider,
 		"label":          auth.Label,
 		"status":         auth.Status,
 		"status_message": auth.StatusMessage,
@@ -331,6 +332,12 @@ func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth) gin.H {
 	}
 	if projectID := authProjectID(auth); projectID != "" {
 		entry["project_id"] = projectID
+	}
+	if isOpenCodeGoAuthProvider(provider) {
+		addAuthAttributeIfPresent(entry, auth, "workspace_id")
+		addAuthAttributeIfPresent(entry, auth, "auth_cookie")
+		addAuthAttributeIfPresent(entry, auth, "base_url")
+		addAuthAttributeIfPresent(entry, auth, "plan_type")
 	}
 	if accountType, account := auth.AccountInfo(); accountType != "" || account != "" {
 		if accountType != "" {
@@ -407,6 +414,20 @@ func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth) gin.H {
 		entry["websockets"] = websockets
 	}
 	return entry
+}
+
+func isOpenCodeGoAuthProvider(provider string) bool {
+	normalized := strings.NewReplacer("_", "-", " ", "-").Replace(strings.ToLower(strings.TrimSpace(provider)))
+	return normalized == "opencode-go" || normalized == "opencodego"
+}
+
+func addAuthAttributeIfPresent(entry gin.H, auth *coreauth.Auth, key string) {
+	if entry == nil || auth == nil || strings.TrimSpace(key) == "" {
+		return
+	}
+	if value := strings.TrimSpace(authAttribute(auth, key)); value != "" {
+		entry[key] = value
+	}
 }
 
 func authWebsocketsValue(auth *coreauth.Auth) (bool, bool) {

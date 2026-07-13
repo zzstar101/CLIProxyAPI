@@ -389,6 +389,58 @@ func TestFileSynthesizer_Synthesize_SkipsDirectories(t *testing.T) {
 	}
 }
 
+func TestFileSynthesizer_Synthesize_OpenCodeGoAuthFileKeepsProvider(t *testing.T) {
+	tempDir := t.TempDir()
+
+	authData := map[string]any{
+		"type":         "opencode-go",
+		"api_key":      "sk-opencode",
+		"workspace_id": "wrk_123",
+		"auth_cookie":  "oc_locale=zh; auth=session",
+		"label":        "Default API Key",
+	}
+	data, _ := json.Marshal(authData)
+	err := os.WriteFile(filepath.Join(tempDir, "opencode-go.json"), data, 0644)
+	if err != nil {
+		t.Fatalf("failed to write auth file: %v", err)
+	}
+
+	synth := NewFileSynthesizer()
+	ctx := &SynthesisContext{
+		Config:      &config.Config{},
+		AuthDir:     tempDir,
+		Now:         time.Date(2026, 7, 3, 0, 0, 0, 0, time.UTC),
+		IDGenerator: NewStableIDGenerator(),
+	}
+
+	auths, err := synth.Synthesize(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(auths) != 1 {
+		t.Fatalf("expected 1 auth, got %d", len(auths))
+	}
+	auth := auths[0]
+	if auth.Provider != "opencode-go" {
+		t.Fatalf("provider = %q, want opencode-go", auth.Provider)
+	}
+	if got := auth.Attributes["plan_type"]; got != "go" {
+		t.Fatalf("plan_type = %q, want go", got)
+	}
+	if got := auth.Attributes["api_key"]; got != "sk-opencode" {
+		t.Fatalf("api_key attribute = %q, want copied key", got)
+	}
+	if got := auth.Attributes["workspace_id"]; got != "wrk_123" {
+		t.Fatalf("workspace_id attribute = %q, want copied workspace", got)
+	}
+	if got := auth.Attributes["auth_cookie"]; got != "oc_locale=zh; auth=session" {
+		t.Fatalf("auth_cookie attribute = %q, want copied cookie", got)
+	}
+	if got := auth.Attributes["base_url"]; got != "https://opencode.ai/zen/go/v1" {
+		t.Fatalf("base_url attribute = %q, want OpenCode Go API base", got)
+	}
+}
+
 func TestFileSynthesizer_Synthesize_RelativeID(t *testing.T) {
 	tempDir := t.TempDir()
 

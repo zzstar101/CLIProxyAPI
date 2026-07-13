@@ -212,6 +212,49 @@ func TestRegisterModelsForAuth_OpenAICompatibilityInputModalities(t *testing.T) 
 	}
 }
 
+func TestRegisterModelsForAuth_OpenCodeGoRegistersNativeModels(t *testing.T) {
+	service := &Service{cfg: &config.Config{}}
+	auth := &coreauth.Auth{
+		ID:       "auth-opencode-go",
+		Provider: "opencode-go",
+		Status:   coreauth.StatusActive,
+		Attributes: map[string]string{
+			"api_key":  "sk-opencode",
+			"base_url": "https://opencode.ai/zen/go/v1",
+		},
+	}
+
+	registry := internalregistry.GetGlobalRegistry()
+	registry.UnregisterClient(auth.ID)
+	t.Cleanup(func() {
+		registry.UnregisterClient(auth.ID)
+	})
+
+	service.registerModelsForAuth(context.Background(), auth)
+
+	models := registry.GetModelsForClient(auth.ID)
+	if len(models) == 0 {
+		t.Fatal("expected opencode-go models to be registered")
+	}
+	var sawGLM, sawMiniMax bool
+	for _, model := range models {
+		if model == nil {
+			continue
+		}
+		switch strings.TrimSpace(model.ID) {
+		case "glm-5.2":
+			sawGLM = true
+		case "minimax-m3":
+			sawMiniMax = true
+		case "gpt-5.5":
+			t.Fatal("opencode-go should not register codex gpt models")
+		}
+	}
+	if !sawGLM || !sawMiniMax {
+		t.Fatalf("expected glm-5.2 and minimax-m3, got %#v", models)
+	}
+}
+
 func TestRegisterModelsForAuth_AntigravityFetchesWebSearchCapability(t *testing.T) {
 	var sawFetch bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
