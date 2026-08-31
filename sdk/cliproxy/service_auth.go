@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/opencodego"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/watcher"
@@ -22,6 +23,7 @@ func newDefaultAuthManager() *sdkAuth.Manager {
 		sdkAuth.NewCodexAuthenticator(),
 		sdkAuth.NewClaudeAuthenticator(),
 		sdkAuth.NewXAIAuthenticator(),
+		sdkAuth.NewOpenCodeAuthenticator(),
 	)
 }
 
@@ -411,6 +413,11 @@ func resolveCooldownStateAuthDir(cfg *config.Config) (string, error) {
 
 func openAICompatInfoFromAuth(a *coreauth.Auth) (providerKey string, compatName string, ok bool) {
 	if a == nil {
+		return "", "", false
+	}
+	// Native providers may carry legacy compatibility attributes in persisted
+	// auth files. They must still use their own executor and model registry.
+	if opencodego.IsProvider(a.Provider) {
 		return "", "", false
 	}
 	if len(a.Attributes) > 0 {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/constant"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/modelconfig"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/opencodego"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
@@ -152,6 +153,38 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 			}
 			if authKind == "apikey" {
 				excluded = entry.ExcludedModels
+			}
+		}
+		models = applyExcludedModels(models, excluded)
+	case opencodego.ProviderName:
+		apiKey := ""
+		baseURL := opencodego.DefaultBaseURL
+		if a.Attributes != nil {
+			apiKey = strings.TrimSpace(a.Attributes["api_key"])
+			if configuredBaseURL := strings.TrimSpace(a.Attributes["base_url"]); configuredBaseURL != "" {
+				baseURL = configuredBaseURL
+			}
+		}
+		if a.Metadata != nil {
+			if apiKey == "" {
+				apiKey, _ = a.Metadata["api_key"].(string)
+				apiKey = strings.TrimSpace(apiKey)
+			}
+			if metadataBaseURL, ok := a.Metadata["base_url"].(string); ok && strings.TrimSpace(metadataBaseURL) != "" {
+				baseURL = strings.TrimSpace(metadataBaseURL)
+			}
+		}
+		if upstreamModels, fetchErr := opencodego.FetchModels(ctx, nil, baseURL, apiKey); fetchErr == nil {
+			models = make([]*ModelInfo, 0, len(upstreamModels))
+			for _, upstreamModel := range upstreamModels {
+				if modelID := strings.TrimSpace(upstreamModel.ID); modelID != "" {
+					models = append(models, &ModelInfo{
+						ID:      modelID,
+						Object:  upstreamModel.Object,
+						OwnedBy: upstreamModel.OwnedBy,
+						Type:    "openai",
+					})
+				}
 			}
 		}
 		models = applyExcludedModels(models, excluded)
@@ -532,7 +565,7 @@ func (s *Service) oauthExcludedModels(provider, authKind string) []string {
 	}
 	authKindKey := strings.ToLower(strings.TrimSpace(authKind))
 	providerKey := strings.ToLower(strings.TrimSpace(provider))
-	if authKindKey == "apikey" {
+	if authKindKey == "apikey" && providerKey != "opencode-go" {
 		return nil
 	}
 	return cfg.OAuthExcludedModels[providerKey]

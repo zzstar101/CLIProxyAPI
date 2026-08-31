@@ -263,6 +263,21 @@ var oauthSessions = newOAuthSessionStore(oauthSessionTTL)
 
 func RegisterOAuthSession(state, provider string) { oauthSessions.Register(state, provider) }
 
+func SetOAuthSessionMetadata(state string, metadata map[string]any) {
+	state = strings.TrimSpace(state)
+	if state == "" {
+		return
+	}
+	oauthSessions.mu.Lock()
+	defer oauthSessions.mu.Unlock()
+	session, ok := oauthSessions.sessions[state]
+	if !ok || session.Completed {
+		return
+	}
+	session.Metadata = cloneOAuthSessionMetadata(metadata)
+	oauthSessions.sessions[state] = session
+}
+
 func RegisterPluginOAuthSession(state, provider string, metadata map[string]any) error {
 	return oauthSessions.RegisterPlugin(state, provider, metadata)
 }

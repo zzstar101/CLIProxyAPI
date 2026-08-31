@@ -20,8 +20,10 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/kimi"
 	xaiauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/xai"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/misc"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/opencodego"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/pluginhost"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
+	sdkAuth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 	log "github.com/sirupsen/logrus"
@@ -339,6 +341,57 @@ func (h *Handler) RequestCodexToken(c *gin.Context) {
 	}()
 
 	c.JSON(200, gin.H{"status": "ok", "url": authURL, "state": state})
+}
+
+// RequestOpenCodeGoToken starts the official OpenCode Console device flow.
+func (h *Handler) RequestOpenCodeGoToken(c *gin.Context) {
+	state, err := misc.GenerateRandomState()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate state parameter"})
+		return
+	}
+	device, err := opencodego.StartDeviceLogin(c.Request.Context(), nil, opencodego.ConsoleServer)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	RegisterOAuthSession(state, opencodego.ProviderName)
+	workspaceID := strings.TrimSpace(c.Query("workspace_id"))
+	SetOAuthSessionMetadata(state, map[string]any{"workspace_id": workspaceID})
+	go func() {
+		ctx := context.Background()
+		session, pollErr := opencodego.PollDeviceLogin(ctx, nil, opencodego.ConsoleServer, device)
+		if pollErr != nil {
+			SetOAuthSessionError(state, pollErr.Error())
+			return
+		}
+		var prompt opencodego.LoginPrompt
+		if workspaceID != "" {
+			prompt = nil
+		}
+		selected, selectErr := opencodego.SelectWorkspace(ctx, nil, session, workspaceID, prompt)
+		if selectErr != nil {
+			SetOAuthSessionError(state, selectErr.Error())
+			return
+		}
+		if key, keyErr := opencodego.FetchDefaultAPIKey(ctx, nil, selected); keyErr == nil {
+			selected.DefaultAPIKey = key
+		}
+		record := sdkAuth.NewOpenCodeGoAuthRecord(selected)
+		if errGuard := guardOAuthSessionPendingForSave(state, opencodego.ProviderName); errGuard != nil {
+			return
+		}
+		if _, saveErr := h.saveTokenRecord(ctx, record); saveErr != nil {
+			SetOAuthSessionError(state, saveErr.Error())
+			return
+		}
+		CompleteOAuthSession(state)
+	}()
+	response := gin.H{"status": "ok", "url": device.VerificationURIComplete, "state": state, "flow": "device", "user_code": device.UserCode}
+	if device.ExpiresIn > 0 {
+		response["expires_in"] = device.ExpiresIn
+	}
+	c.JSON(http.StatusOK, response)
 }
 
 func (h *Handler) RequestAntigravityToken(c *gin.Context) {
@@ -776,6 +829,10 @@ func (h *Handler) GetAuthStatus(c *gin.Context) {
 	}
 	if status != "" {
 		c.JSON(http.StatusOK, gin.H{"status": "error", "error": status})
+		return
+	}
+	if provider == opencodego.ProviderName {
+		c.JSON(http.StatusOK, gin.H{"status": "wait"})
 		return
 	}
 	h.mu.Lock()
