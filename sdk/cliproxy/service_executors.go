@@ -209,6 +209,7 @@ func baselineExecutorAuths() []*coreauth.Auth {
 		"antigravity",
 		"kimi",
 		"xai",
+		"opencode-go",
 		"openai-compatibility",
 	}
 	auths := make([]*coreauth.Auth, 0, len(providers))
@@ -303,6 +304,10 @@ func (s *Service) registerExecutorForAuth(a *coreauth.Auth, forceReplace bool) {
 			}
 		}
 		s.coreManager.RegisterExecutor(executor.NewXAIAutoExecutor(cfg))
+	case "opencode-go":
+		// OpenCode Go uses OpenAI request formats, but its endpoint and credentials come
+		// from auth files instead of openai-compatibility configuration.
+		s.coreManager.RegisterExecutor(executor.NewOpenCodeGoExecutor(cfg))
 	default:
 		providerKey := strings.ToLower(strings.TrimSpace(a.Provider))
 		if providerKey == "" {

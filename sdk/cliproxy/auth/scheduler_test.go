@@ -317,6 +317,41 @@ func TestManagerLegacyWeightedRoundRobinKeepsIndependentAliasPrefixedModelState(
 	}
 }
 
+func TestManagerPrefixedAuthDoesNotHandleUnprefixedRoute(t *testing.T) {
+	manager := NewManager(nil, &WeightedRoundRobinSelector{}, nil)
+	manager.executors["gemini"] = schedulerTestExecutor{}
+
+	prefixed := &Auth{ID: "cyber-auth", Provider: "gemini", Prefix: "cyber"}
+	plain := &Auth{ID: "plain-auth", Provider: "gemini"}
+	for _, auth := range []*Auth{prefixed, plain} {
+		if _, errRegister := manager.Register(context.Background(), auth); errRegister != nil {
+			t.Fatalf("Register(%s) error = %v", auth.ID, errRegister)
+		}
+	}
+	registry.GetGlobalRegistry().RegisterClient("cyber-auth", "gemini", []*registry.ModelInfo{{ID: "shared"}, {ID: "cyber/shared"}})
+	registry.GetGlobalRegistry().RegisterClient("plain-auth", "gemini", []*registry.ModelInfo{{ID: "shared"}, {ID: "cyber/shared"}})
+	t.Cleanup(func() {
+		registry.GetGlobalRegistry().UnregisterClient("cyber-auth")
+		registry.GetGlobalRegistry().UnregisterClient("plain-auth")
+	})
+
+	got, _, errPick := manager.pickNext(context.Background(), "gemini", "shared", cliproxyexecutor.Options{}, nil)
+	if errPick != nil {
+		t.Fatalf("pickNext(unprefixed) error = %v", errPick)
+	}
+	if got == nil || got.ID != "plain-auth" {
+		t.Fatalf("pickNext(unprefixed) auth = %#v, want plain-auth", got)
+	}
+
+	got, _, errPick = manager.pickNext(context.Background(), "gemini", "cyber/shared", cliproxyexecutor.Options{}, nil)
+	if errPick != nil {
+		t.Fatalf("pickNext(prefixed) error = %v", errPick)
+	}
+	if got == nil || got.ID != "cyber-auth" {
+		t.Fatalf("pickNext(prefixed) auth = %#v, want cyber-auth", got)
+	}
+}
+
 func TestSchedulerPick_WeightedRoundRobinSkipsNonPositiveWeightPriorityTier(t *testing.T) {
 	t.Parallel()
 

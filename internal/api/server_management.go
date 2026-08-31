@@ -142,6 +142,13 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.PUT("/openai-compatibility", s.mgmt.PutOpenAICompat)
 		mgmt.PATCH("/openai-compatibility", s.mgmt.PatchOpenAICompat)
 		mgmt.DELETE("/openai-compatibility", s.mgmt.DeleteOpenAICompat)
+		mgmt.GET("/opencode-go/usage", s.mgmt.GetOpenCodeGoUsage)
+		mgmt.GET("/opencode-go/models", s.mgmt.GetOpenCodeGoModels)
+		mgmt.GET("/opencode-go/status", s.mgmt.GetOpenCodeGoStatus)
+		mgmt.GET("/opencode-go/referral", s.mgmt.GetOpenCodeGoReferral)
+		mgmt.POST("/opencode-go/browser-referral", s.mgmt.GetOpenCodeGoBrowserReferral)
+		mgmt.POST("/opencode-go/browser-login", s.mgmt.ImportOpenCodeGoBrowserSession)
+		mgmt.POST("/opencode-go/api-key-login", s.mgmt.ImportOpenCodeGoAPIKey)
 
 		mgmt.GET("/vertex-api-key", s.mgmt.GetVertexCompatKeys)
 		mgmt.PUT("/vertex-api-key", s.mgmt.PutVertexCompatKeys)
@@ -178,6 +185,7 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/antigravity-auth-url", s.mgmt.RequestAntigravityToken)
 		mgmt.GET("/kimi-auth-url", s.mgmt.RequestKimiToken)
 		mgmt.GET("/xai-auth-url", s.mgmt.RequestXAIToken)
+		mgmt.GET("/opencode-go-auth-url", s.mgmt.RequestOpenCodeGoToken)
 		mgmt.GET("/get-auth-status", s.mgmt.GetAuthStatus)
 		mgmt.DELETE("/oauth-session", s.mgmt.CancelAuthSession)
 	}

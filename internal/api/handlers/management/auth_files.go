@@ -326,12 +326,16 @@ func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth) gin.H {
 	if name == "" {
 		name = auth.ID
 	}
+	provider := strings.TrimSpace(auth.Provider)
+	if strings.HasPrefix(strings.ToLower(strings.ReplaceAll(name, "\\", "/")), "opencode-go/") {
+		provider = "opencode-go"
+	}
 	entry := gin.H{
 		"id":             auth.ID,
 		"auth_index":     auth.Index,
 		"name":           name,
-		"type":           strings.TrimSpace(auth.Provider),
-		"provider":       strings.TrimSpace(auth.Provider),
+		"type":           provider,
+		"provider":       provider,
 		"label":          auth.Label,
 		"status":         auth.Status,
 		"status_message": auth.StatusMessage,
@@ -350,6 +354,14 @@ func (h *Handler) buildAuthFileEntryLocked(auth *coreauth.Auth) gin.H {
 	}
 	if email := authEmail(auth); email != "" {
 		entry["email"] = email
+	} else if strings.HasPrefix(strings.ToLower(strings.ReplaceAll(name, "\\", "/")), "opencode-go/") {
+		// Legacy OpenCode Go auth files store the email at the JSON root; expose it as the account label.
+		if email := h.openCodeGoPersistedFields(auth)["email"]; email != "" {
+			entry["email"] = email
+			if strings.TrimSpace(auth.Label) == "" {
+				entry["label"] = email
+			}
+		}
 	}
 	if projectID := authProjectID(auth); projectID != "" {
 		entry["project_id"] = projectID
@@ -637,6 +649,23 @@ func isUnsafeAuthFileName(name string) bool {
 	}
 	if filepath.VolumeName(name) != "" {
 		return true
+	}
+	return false
+}
+
+// isUnsafeAuthFileRelativePath validates a read-only auth file path while
+// allowing provider-specific files stored in auth subdirectories.
+func isUnsafeAuthFileRelativePath(name string) bool {
+	if strings.TrimSpace(name) == "" || strings.ContainsAny(name, "\\\x00") {
+		return true
+	}
+	if filepath.IsAbs(name) || filepath.VolumeName(name) != "" {
+		return true
+	}
+	for _, part := range strings.Split(name, "/") {
+		if part == "" || part == "." || part == ".." {
+			return true
+		}
 	}
 	return false
 }
