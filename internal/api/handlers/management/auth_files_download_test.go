@@ -37,7 +37,7 @@ func TestDownloadAuthFile_ReturnsFile(t *testing.T) {
 	}
 }
 
-func TestDownloadAuthFile_RejectsPathSeparators(t *testing.T) {
+func TestDownloadAuthFile_RejectsUnsafeRelativePaths(t *testing.T) {
 	t.Setenv("MANAGEMENT_PASSWORD", "")
 
 	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: t.TempDir()}, nil)
@@ -45,8 +45,8 @@ func TestDownloadAuthFile_RejectsPathSeparators(t *testing.T) {
 	for _, name := range []string{
 		"../external/secret.json",
 		`..\\external\\secret.json`,
-		"nested/secret.json",
-		`nested\\secret.json`,
+		"nested/../secret.json",
+		"/tmp/secret.json",
 	} {
 		rec := httptest.NewRecorder()
 		ctx, _ := gin.CreateTestContext(rec)
@@ -56,5 +56,37 @@ func TestDownloadAuthFile_RejectsPathSeparators(t *testing.T) {
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected %d for name %q, got %d with body %s", http.StatusBadRequest, name, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+func TestDownloadAuthFile_AllowsNestedAuthFile(t *testing.T) {
+	t.Setenv("MANAGEMENT_PASSWORD", "")
+
+	authDir := t.TempDir()
+	nestedDir := filepath.Join(authDir, "opencode-go")
+	if err := os.MkdirAll(nestedDir, 0o700); err != nil {
+		t.Fatalf("failed to create nested auth directory: %v", err)
+	}
+	fileName := "opencode-go/workspace.json"
+	expected := []byte(`{"type":"opencode-go"}`)
+	if err := os.WriteFile(filepath.Join(authDir, filepath.FromSlash(fileName)), expected, 0o600); err != nil {
+		t.Fatalf("failed to write nested auth file: %v", err)
+	}
+
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir}, nil)
+	rec := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(rec)
+	ctx.Request = httptest.NewRequest(
+		http.MethodGet,
+		"/v0/management/auth-files/download?name="+url.QueryEscape(fileName),
+		nil,
+	)
+	h.DownloadAuthFile(ctx)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected nested file status %d, got %d with body %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	if got := rec.Body.Bytes(); string(got) != string(expected) {
+		t.Fatalf("unexpected nested file content: %q", string(got))
 	}
 }

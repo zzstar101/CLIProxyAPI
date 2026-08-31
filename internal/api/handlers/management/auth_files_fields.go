@@ -19,6 +19,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/watcher/synthesizer"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	log "github.com/sirupsen/logrus"
 )
 
 // PatchAuthFileStatus toggles the disabled state of an auth file
@@ -844,6 +845,7 @@ func (h *Handler) saveTokenRecord(ctx context.Context, record *coreauth.Auth) (s
 	if record == nil {
 		return "", fmt.Errorf("token record is nil")
 	}
+	duplicatePaths := h.prepareOpenCodeGoRecord(record)
 	h.mergeExistingAuthFileMetadata(record)
 	store := h.tokenStoreWithBaseDir()
 	if store == nil {
@@ -857,6 +859,14 @@ func (h *Handler) saveTokenRecord(ctx context.Context, record *coreauth.Auth) (s
 	savedPath, errSave := store.Save(ctx, record)
 	if errSave != nil {
 		return savedPath, errSave
+	}
+	for _, duplicatePath := range duplicatePaths {
+		if strings.TrimSpace(duplicatePath) == "" || sameAuthFilePath(duplicatePath, savedPath) {
+			continue
+		}
+		if errDelete := store.Delete(ctx, duplicatePath); errDelete != nil {
+			log.WithError(errDelete).Warnf("failed to remove duplicate OpenCode Go auth file")
+		}
 	}
 	if h.postAuthPersistHook != nil {
 		persistedRecord := record

@@ -17,9 +17,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/opencodego"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
+	sdkauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
@@ -47,6 +49,12 @@ type OpenAICompatExecutor struct {
 // NewOpenAICompatExecutor creates an executor bound to a provider key (e.g., "openrouter").
 func NewOpenAICompatExecutor(provider string, cfg *config.Config) *OpenAICompatExecutor {
 	return &OpenAICompatExecutor{provider: provider, cfg: cfg}
+}
+
+// NewOpenCodeGoExecutor creates a dedicated OpenCode Go provider executor. It reuses
+// the OpenAI protocol translators without sourcing credentials from compatibility channels.
+func NewOpenCodeGoExecutor(cfg *config.Config) *OpenAICompatExecutor {
+	return NewOpenAICompatExecutor("opencode-go", cfg)
 }
 
 // Identifier implements cliproxyauth.ProviderExecutor.
@@ -105,6 +113,15 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 	responseFormat := cliproxyexecutor.ResponseFormatOrSource(opts)
 	to := sdktranslator.FromString("openai")
 	endpoint := "/chat/completions"
+	protocol := e.openCodeGoProtocol(auth, baseModel)
+	switch protocol {
+	case "responses":
+		to = sdktranslator.FromString("openai-response")
+		endpoint = "/responses"
+	case "messages":
+		to = sdktranslator.FromString("claude")
+		endpoint = "/messages"
+	}
 	if opts.Alt == "responses/compact" {
 		to = sdktranslator.FromString("openai-response")
 		endpoint = "/responses/compact"
@@ -158,6 +175,9 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 		attrs = auth.Attributes
 	}
 	util.ApplyCustomHeadersFromAttrs(httpReq, attrs, opts.Headers)
+	if protocol == "messages" && httpReq.Header.Get("anthropic-version") == "" {
+		httpReq.Header.Set("anthropic-version", "2023-06-01")
+	}
 	var authID, authLabel, authType, authValue string
 	if auth != nil {
 		authID = auth.ID
@@ -323,6 +343,12 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 	from := opts.SourceFormat
 	responseFormat := cliproxyexecutor.ResponseFormatOrSource(opts)
 	to := sdktranslator.FromString("openai")
+	protocol := e.openCodeGoProtocol(auth, baseModel)
+	if protocol == "responses" {
+		to = sdktranslator.FromString("openai-response")
+	} else if protocol == "messages" {
+		to = sdktranslator.FromString("claude")
+	}
 	originalPayloadSource := req.Payload
 	if len(opts.OriginalRequest) > 0 {
 		originalPayloadSource = opts.OriginalRequest
@@ -352,10 +378,20 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 
 	// Request usage data in the final streaming chunk so that token statistics
 	// are captured even when the upstream is an OpenAI-compatible provider.
-	translated = helps.SetBoolIfDifferent(translated, "stream_options.include_usage", true)
+	if protocol == "chat" || protocol == "" {
+		translated = helps.SetBoolIfDifferent(translated, "stream_options.include_usage", true)
+	} else if updated, errDelete := sjson.DeleteBytes(translated, "stream_options"); errDelete == nil {
+		translated = updated
+	}
 	reporter.SetTranslatedReasoningEffort(translated, to.String())
 
-	url := strings.TrimSuffix(baseURL, "/") + "/chat/completions"
+	endpoint := "/chat/completions"
+	if protocol == "responses" {
+		endpoint = "/responses"
+	} else if protocol == "messages" {
+		endpoint = "/messages"
+	}
+	url := strings.TrimSuffix(baseURL, "/") + endpoint
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(translated))
 	if err != nil {
 		return nil, err
@@ -370,6 +406,9 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 		attrs = auth.Attributes
 	}
 	util.ApplyCustomHeadersFromAttrs(httpReq, attrs, opts.Headers)
+	if protocol == "messages" && httpReq.Header.Get("anthropic-version") == "" {
+		httpReq.Header.Set("anthropic-version", "2023-06-01")
+	}
 	httpReq.Header.Set("Accept", "text/event-stream")
 	httpReq.Header.Set("Cache-Control", "no-cache")
 	var authID, authLabel, authType, authValue string
@@ -723,6 +762,9 @@ func (e *OpenAICompatExecutor) CountTokens(ctx context.Context, auth *cliproxyau
 // that need plugin/Home refresh must bind a refresh-capable executor instead.
 func (e *OpenAICompatExecutor) Refresh(ctx context.Context, auth *cliproxyauth.Auth) (*cliproxyauth.Auth, error) {
 	log.Debugf("openai compat executor: refresh called")
+	if auth != nil && strings.EqualFold(strings.TrimSpace(auth.Provider), "opencode-go") {
+		return sdkauth.RefreshOpenCodeGoAuth(ctx, auth)
+	}
 	if refreshed, handled, err := helps.RefreshAuthViaHome(ctx, e.cfg, auth); handled {
 		return refreshed, err
 	}
@@ -923,7 +965,50 @@ func (e *OpenAICompatExecutor) resolveCredentials(auth *cliproxyauth.Auth) (base
 		baseURL = strings.TrimSpace(auth.Attributes["base_url"])
 		apiKey = strings.TrimSpace(auth.Attributes["api_key"])
 	}
+	if opencodego.IsProvider(auth.Provider) {
+		if auth.Metadata != nil {
+			if baseURL == "" {
+				baseURL, _ = auth.Metadata["base_url"].(string)
+				baseURL = strings.TrimSpace(baseURL)
+			}
+			if apiKey == "" {
+				apiKey, _ = auth.Metadata["api_key"].(string)
+				apiKey = strings.TrimSpace(apiKey)
+			}
+		}
+		if baseURL == "" {
+			baseURL = opencodego.DefaultBaseURL
+		}
+	}
 	return
+}
+
+func (e *OpenAICompatExecutor) openCodeGoProtocol(auth *cliproxyauth.Auth, model string) string {
+	if e == nil {
+		return ""
+	}
+	provider := strings.ToLower(strings.TrimSpace(e.provider))
+	if provider != "opencode-go" && !strings.Contains(provider, "opencode-go") {
+		return ""
+	}
+	compat := e.resolveCompatConfig(auth)
+	model = strings.TrimSpace(model)
+	if compat != nil {
+		for _, entry := range compat.Models {
+			if !strings.EqualFold(strings.TrimSpace(entry.Name), model) && !strings.EqualFold(strings.TrimSpace(entry.Alias), model) {
+				continue
+			}
+			switch protocol := strings.ToLower(strings.TrimSpace(entry.Protocol)); protocol {
+			case "responses", "response", "openai-responses":
+				return "responses"
+			case "messages", "message", "anthropic":
+				return "messages"
+			default:
+				return "chat"
+			}
+		}
+	}
+	return opencodego.ProtocolForModel(model)
 }
 
 func (e *OpenAICompatExecutor) resolveCompatConfig(auth *cliproxyauth.Auth) *config.OpenAICompatibility {

@@ -730,7 +730,10 @@ func (m *Manager) pickViaPluginScheduler(ctx context.Context, scheduler PluginSc
 		return nil, false, nil
 	}
 	if selected := pickSchedulerAuthByID(candidates, resp.AuthID); selected != nil {
-		return selected, true, nil
+		// A plugin may return an auth ID directly, so recheck account-level excluded models.
+		if strings.TrimSpace(model) == "" || m.authSupportsRouteModel(registry.GetGlobalRegistry(), selected, model) {
+			return selected, true, nil
+		}
 	}
 
 	strategy, okStrategy := builtinSchedulerStrategy(resp.DelegateBuiltin)
@@ -741,11 +744,41 @@ func (m *Manager) pickViaPluginScheduler(ctx context.Context, scheduler PluginSc
 }
 
 func (m *Manager) authSupportsRouteModel(registryRef *registry.ModelRegistry, auth *Auth, routeModel string) bool {
-	if registryRef == nil || auth == nil {
+	if auth == nil {
 		return true
 	}
 	routeKey := canonicalModelKey(routeModel)
 	if routeKey == "" {
+		return true
+	}
+	// When a request matches a configured auth prefix, only accounts with that prefix
+	// may participate. This prevents unprefixed accounts from bypassing an isolated pool.
+	routePrefix := m.configuredAuthPrefix(routeModel)
+	return m.authSupportsRouteModelWithPrefix(registryRef, auth, routeModel, routePrefix)
+}
+
+func (m *Manager) authSupportsRouteModelWithPrefix(registryRef *registry.ModelRegistry, auth *Auth, routeModel, routePrefix string) bool {
+	if auth == nil {
+		return true
+	}
+	routeKey := canonicalModelKey(routeModel)
+	if routeKey == "" {
+		return true
+	}
+	authPrefix := strings.TrimSpace(auth.Prefix)
+	if routePrefix != "" {
+		if !strings.EqualFold(authPrefix, routePrefix) {
+			return false
+		}
+	} else if authPrefix != "" {
+		// Prefixed accounts must not receive ordinary model names. Otherwise a base-model
+		// alias could route an unprefixed request back into an isolated account pool.
+		return false
+	}
+	if authExcludesRouteModel(auth, routeKey) {
+		return false
+	}
+	if registryRef == nil {
 		return true
 	}
 	if registryRef.ClientSupportsModel(auth.ID, routeKey) {
@@ -753,6 +786,75 @@ func (m *Manager) authSupportsRouteModel(registryRef *registry.ModelRegistry, au
 	}
 	selectionKey := m.selectionModelKeyForAuth(auth, routeModel)
 	return selectionKey != "" && selectionKey != routeKey && registryRef.ClientSupportsModel(auth.ID, selectionKey)
+}
+
+// configuredAuthPrefix returns the configured auth prefix matched by a requested model.
+// TryRLock keeps this safe for selection paths that already hold a read lock. If the
+// snapshot is unavailable, the per-account prefix checks still provide the fallback.
+func (m *Manager) configuredAuthPrefix(routeModel string) string {
+	if m == nil {
+		return ""
+	}
+	model := strings.ToLower(strings.TrimSpace(routeModel))
+	if model == "" || !m.mu.TryRLock() {
+		return ""
+	}
+	defer m.mu.RUnlock()
+	return configuredAuthPrefixFromAuths(m.auths, model)
+}
+
+func configuredAuthPrefixFromAuths(auths map[string]*Auth, routeModel string) string {
+	matched := ""
+	for _, auth := range auths {
+		if auth == nil {
+			continue
+		}
+		prefix := strings.TrimSpace(auth.Prefix)
+		if prefix == "" || !strings.HasPrefix(routeModel, strings.ToLower(prefix)+"/") {
+			continue
+		}
+		// Prefer the longest prefix when configured prefixes overlap.
+		if len(prefix) > len(matched) {
+			matched = prefix
+		}
+	}
+	return matched
+}
+
+func authExcludesRouteModel(auth *Auth, routeModel string) bool {
+	if auth == nil {
+		return false
+	}
+	modelKey := strings.ToLower(strings.TrimSpace(routeModel))
+	if modelKey == "" {
+		return false
+	}
+	if auth.Attributes != nil {
+		for _, item := range strings.Split(auth.Attributes["excluded_models"], ",") {
+			if strings.EqualFold(strings.TrimSpace(item), modelKey) {
+				return true
+			}
+		}
+	}
+	if auth.Metadata != nil {
+		if raw, ok := auth.Metadata["excluded_models"]; ok {
+			switch values := raw.(type) {
+			case []string:
+				for _, item := range values {
+					if strings.EqualFold(strings.TrimSpace(item), modelKey) {
+						return true
+					}
+				}
+			case []any:
+				for _, value := range values {
+					if item, ok := value.(string); ok && strings.EqualFold(strings.TrimSpace(item), modelKey) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
 }
 
 func (m *Manager) normalizeProviders(providers []string) []string {
@@ -936,6 +1038,7 @@ func (m *Manager) closestCooldownWait(providers []string, model string, attempt 
 	registryRef := registry.GetGlobalRegistry()
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	routePrefix := configuredAuthPrefixFromAuths(m.auths, model)
 	var (
 		found   bool
 		minWait time.Duration
@@ -954,7 +1057,7 @@ func (m *Manager) closestCooldownWait(providers []string, model string, attempt 
 		if _, ok := providerSet[providerKey]; !ok {
 			continue
 		}
-		if model != "" && !m.authSupportsRouteModel(registryRef, auth, model) {
+		if model != "" && !m.authSupportsRouteModelWithPrefix(registryRef, auth, model, routePrefix) {
 			continue
 		}
 		effectiveRetry := effectiveRequestRetryLimit(auth, defaultRequestRetry)
@@ -1007,6 +1110,7 @@ func (m *Manager) retryAllowed(attempt int, providers []string, model string, el
 	registryRef := registry.GetGlobalRegistry()
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+	routePrefix := configuredAuthPrefixFromAuths(m.auths, model)
 	for _, auth := range m.auths {
 		if auth == nil || auth.Disabled || auth.Status == StatusDisabled {
 			continue
@@ -1021,7 +1125,7 @@ func (m *Manager) retryAllowed(attempt int, providers []string, model string, el
 		if _, ok := providerSet[providerKey]; !ok {
 			continue
 		}
-		if model != "" && !m.authSupportsRouteModel(registryRef, auth, model) {
+		if model != "" && !m.authSupportsRouteModelWithPrefix(registryRef, auth, model, routePrefix) {
 			continue
 		}
 		effectiveRetry := effectiveRequestRetryLimit(auth, defaultRequestRetry)
@@ -1347,6 +1451,14 @@ func (m *Manager) routeAwareSelectionRequired(auth *Auth, routeModel string) boo
 	if auth == nil || strings.TrimSpace(routeModel) == "" {
 		return false
 	}
+	routePrefix := configuredAuthPrefixFromAuths(m.auths, routeModel)
+	authPrefix := strings.TrimSpace(auth.Prefix)
+	if routePrefix != "" {
+		return !strings.EqualFold(authPrefix, routePrefix)
+	}
+	if authPrefix != "" {
+		return true
+	}
 	return m.selectionModelKeyForAuth(auth, routeModel) != canonicalModelKey(routeModel)
 }
 
@@ -1381,6 +1493,7 @@ func (m *Manager) pickNextLegacy(ctx context.Context, provider, model string, op
 		}
 	}
 	registryRef := registry.GetGlobalRegistry()
+	routePrefix := configuredAuthPrefixFromAuths(m.auths, model)
 	for _, candidate := range m.auths {
 		if candidate == nil || executorKeyFromAuth(candidate) != provider || candidate.Disabled {
 			continue
@@ -1394,7 +1507,7 @@ func (m *Manager) pickNextLegacy(ctx context.Context, provider, model string, op
 		if _, used := tried[candidate.ID]; used {
 			continue
 		}
-		if modelKey != "" && !m.authSupportsRouteModel(registryRef, candidate, model) {
+		if modelKey != "" && !m.authSupportsRouteModelWithPrefix(registryRef, candidate, model, routePrefix) {
 			continue
 		}
 		candidates = append(candidates, candidate)
@@ -1704,6 +1817,7 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 		}
 	}
 	registryRef := registry.GetGlobalRegistry()
+	routePrefix := configuredAuthPrefixFromAuths(m.auths, model)
 	for _, candidate := range m.auths {
 		if candidate == nil || candidate.Disabled {
 			continue
@@ -1727,7 +1841,7 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 		if _, ok := m.executors[providerKey]; !ok {
 			continue
 		}
-		if modelKey != "" && !m.authSupportsRouteModel(registryRef, candidate, model) {
+		if modelKey != "" && !m.authSupportsRouteModelWithPrefix(registryRef, candidate, model, routePrefix) {
 			continue
 		}
 		candidates = append(candidates, candidate)
@@ -1921,6 +2035,7 @@ func (m *Manager) warnLogAuthUnavailable(ctx context.Context, providers []string
 		}
 	}
 	registryRef := registry.GetGlobalRegistry()
+	routePrefix := configuredAuthPrefixFromAuths(m.auths, model)
 
 	coolingSummaries := make([]string, 0)
 	totalCandidates := 0
@@ -1948,7 +2063,7 @@ func (m *Manager) warnLogAuthUnavailable(ctx context.Context, providers []string
 				continue
 			}
 		}
-		if model != "" && !m.authSupportsRouteModel(registryRef, candidate, model) {
+		if model != "" && !m.authSupportsRouteModelWithPrefix(registryRef, candidate, model, routePrefix) {
 			continue
 		}
 		totalCandidates++

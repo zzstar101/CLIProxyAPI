@@ -25,7 +25,7 @@ import (
 // Download single auth file by name
 func (h *Handler) DownloadAuthFile(c *gin.Context) {
 	name := strings.TrimSpace(c.Query("name"))
-	if isUnsafeAuthFileName(name) {
+	if isUnsafeAuthFileRelativePath(name) {
 		c.JSON(400, gin.H{"error": "invalid name"})
 		return
 	}

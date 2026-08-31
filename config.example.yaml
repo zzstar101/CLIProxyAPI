@@ -608,6 +608,18 @@ nonstream-keepalive-interval: 0
 #   beta-features: "multi_agent"
 
 # OpenAI compatibility providers
+# OpenCode Go uses the same OpenAI-compatible block. Run `-opencode-go-login` to
+# save the Console OAuth session and reuse the account's existing default key.
+# The official limits are reported by `/v1/usage` as rolling (5h), weekly, and monthly windows.
+# For model-specific upstream protocols set `protocol` to `chat`, `responses`, or `messages`.
+# openai-compatibility:
+#   - name: "opencode-go"
+#     base-url: "https://opencode.ai/zen/go/v1"
+#     models:
+#       - name: "<model-id>"
+#         alias: "<model-alias>"
+#         protocol: "chat"
+#
 # openai-compatibility:
 #   - name: "openrouter" # The name of the provider; it will be used in the user agent and other places.
 #     disabled: false # optional: set to true to disable this provider without removing it
