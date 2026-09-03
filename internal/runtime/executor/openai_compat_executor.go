@@ -146,6 +146,7 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 	if helps.ShouldNormalizeOpenAIToolResultsForModel(e.resolveCompatConfig(auth), baseModel, requestedModel) {
 		translated = helps.NormalizeOpenAIToolResultsTextOnly(translated)
 	}
+	translated = e.normalizeOpenCodeGoChatRoles(translated, protocol)
 	if opts.Alt != "responses/compact" {
 		translated, err = e.applyPromptCacheKey(ctx, auth, from, baseModel, req, opts, translated)
 		if err != nil {
@@ -175,6 +176,7 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 		attrs = auth.Attributes
 	}
 	util.ApplyCustomHeadersFromAttrs(httpReq, attrs, opts.Headers)
+	e.applyOpenCodeGoSessionHeader(httpReq.Header, opts.Headers, translated)
 	if protocol == "messages" && httpReq.Header.Get("anthropic-version") == "" {
 		httpReq.Header.Set("anthropic-version", "2023-06-01")
 	}
@@ -369,6 +371,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 	if helps.ShouldNormalizeOpenAIToolResultsForModel(e.resolveCompatConfig(auth), baseModel, requestedModel) {
 		translated = helps.NormalizeOpenAIToolResultsTextOnly(translated)
 	}
+	translated = e.normalizeOpenCodeGoChatRoles(translated, protocol)
 	if opts.Alt != "responses/compact" {
 		translated, err = e.applyPromptCacheKey(ctx, auth, from, baseModel, req, opts, translated)
 		if err != nil {
@@ -406,6 +409,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 		attrs = auth.Attributes
 	}
 	util.ApplyCustomHeadersFromAttrs(httpReq, attrs, opts.Headers)
+	e.applyOpenCodeGoSessionHeader(httpReq.Header, opts.Headers, translated)
 	if protocol == "messages" && httpReq.Header.Get("anthropic-version") == "" {
 		httpReq.Header.Set("anthropic-version", "2023-06-01")
 	}
@@ -1009,6 +1013,52 @@ func (e *OpenAICompatExecutor) openCodeGoProtocol(auth *cliproxyauth.Auth, model
 		}
 	}
 	return opencodego.ProtocolForModel(model)
+}
+
+func (e *OpenAICompatExecutor) normalizeOpenCodeGoChatRoles(payload []byte, protocol string) []byte {
+	if e == nil || e.provider != opencodego.ProviderName || protocol != "chat" {
+		return payload
+	}
+
+	messages := gjson.GetBytes(payload, "messages")
+	if !messages.IsArray() {
+		return payload
+	}
+	for index, message := range messages.Array() {
+		if !strings.EqualFold(strings.TrimSpace(message.Get("role").String()), "developer") {
+			continue
+		}
+		updated, errSet := sjson.SetBytes(payload, fmt.Sprintf("messages.%d.role", index), "system")
+		if errSet == nil {
+			payload = updated
+		}
+	}
+	return payload
+}
+
+func (e *OpenAICompatExecutor) applyOpenCodeGoSessionHeader(outgoing http.Header, incoming http.Header, payload []byte) {
+	if e == nil || e.provider != opencodego.ProviderName || outgoing == nil {
+		return
+	}
+	if strings.TrimSpace(outgoing.Get("x-opencode-session")) != "" {
+		return
+	}
+
+	candidates := []string{
+		incoming.Get("x-opencode-session"),
+		incoming.Get("Session-Id"),
+		incoming.Get("X-Session-Id"),
+		incoming.Get("Thread-Id"),
+		gjson.GetBytes(payload, "prompt_cache_key").String(),
+	}
+	for _, candidate := range candidates {
+		sessionID := strings.TrimSpace(candidate)
+		if sessionID == "" || strings.ContainsAny(sessionID, "\r\n") {
+			continue
+		}
+		outgoing.Set("x-opencode-session", sessionID)
+		return
+	}
 }
 
 func (e *OpenAICompatExecutor) resolveCompatConfig(auth *cliproxyauth.Auth) *config.OpenAICompatibility {
