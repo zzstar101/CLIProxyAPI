@@ -198,6 +198,9 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 
 	s.registerModelRefreshCallback()
+	if s.coreManager != nil && !homeEnabled {
+		go s.refreshCommandCodeAccounts(ctx)
+	}
 
 	// Prefer core auth manager auto refresh if available.
 	if s.coreManager != nil && !homeEnabled {

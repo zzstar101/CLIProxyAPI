@@ -417,7 +417,7 @@ func openAICompatInfoFromAuth(a *coreauth.Auth) (providerKey string, compatName 
 	}
 	// Native providers may carry legacy compatibility attributes in persisted
 	// auth files. They must still use their own executor and model registry.
-	if opencodego.IsProvider(a.Provider) {
+	if opencodego.IsProvider(a.Provider) || strings.EqualFold(a.Provider, "command-code") {
 		return "", "", false
 	}
 	if len(a.Attributes) > 0 {

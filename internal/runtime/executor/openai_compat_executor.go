@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/commandcode"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/opencodego"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
@@ -113,7 +114,7 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 	responseFormat := cliproxyexecutor.ResponseFormatOrSource(opts)
 	to := sdktranslator.FromString("openai")
 	endpoint := "/chat/completions"
-	protocol := e.openCodeGoProtocol(auth, baseModel)
+	protocol := e.upstreamProtocol(auth, baseModel)
 	switch protocol {
 	case "responses":
 		to = sdktranslator.FromString("openai-response")
@@ -132,8 +133,11 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 	}
 	originalPayload := originalPayloadSource
 	isCompat := helps.APIKeyModelIsCompat(req)
-	originalTranslated := helps.TranslateRequestWithAPIKeyModelCompatibility(ctx, opts.Headers, e.cfg, from, to, baseModel, originalPayload, opts.Stream, isCompat)
-	translated := helps.TranslateRequestWithAPIKeyModelCompatibility(ctx, opts.Headers, e.cfg, from, to, baseModel, req.Payload, opts.Stream, isCompat)
+	// Claude's cross-protocol nonstream translators aggregate SSE, as in the
+	// native Claude executor. A JSON message would otherwise become empty output.
+	upstreamStream := opts.Stream || (protocol == "messages" && responseFormat != to)
+	originalTranslated := helps.TranslateRequestWithAPIKeyModelCompatibility(ctx, opts.Headers, e.cfg, from, to, baseModel, originalPayload, upstreamStream, isCompat)
+	translated := helps.TranslateRequestWithAPIKeyModelCompatibility(ctx, opts.Headers, e.cfg, from, to, baseModel, req.Payload, upstreamStream, isCompat)
 
 	translated, err = helps.ApplyRequestThinking(translated, req, opts, from.String(), to.String(), e.Identifier())
 	if err != nil {
@@ -224,7 +228,20 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 		return resp, err
 	}
 	helps.AppendAPIResponseChunk(ctx, e.cfg, body)
-	reporter.Publish(ctx, helps.ParseOpenAIUsage(body))
+	if protocol == "messages" && upstreamStream {
+		if err = validateClaudeStreamingResponse(body); err != nil {
+			return resp, err
+		}
+		var streamUsage helps.StreamUsageBuffer
+		for _, line := range bytes.Split(body, []byte("\n")) {
+			helps.ObservePluginExecutorStreamUsage("claude", line, &streamUsage)
+		}
+		streamUsage.Publish(ctx, reporter)
+	} else if protocol == "messages" {
+		reporter.Publish(ctx, helps.ParseClaudeUsage(body))
+	} else {
+		reporter.Publish(ctx, helps.ParseOpenAIUsage(body))
+	}
 	// Ensure we at least record the request even if upstream doesn't return usage
 	reporter.EnsurePublished(ctx)
 	// Translate response back to source format when needed
@@ -345,7 +362,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 	from := opts.SourceFormat
 	responseFormat := cliproxyexecutor.ResponseFormatOrSource(opts)
 	to := sdktranslator.FromString("openai")
-	protocol := e.openCodeGoProtocol(auth, baseModel)
+	protocol := e.upstreamProtocol(auth, baseModel)
 	if protocol == "responses" {
 		to = sdktranslator.FromString("openai-response")
 	} else if protocol == "messages" {
@@ -533,7 +550,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 					return true
 				}
 			}
-			if isDone {
+			if isDone || (protocol == "messages" && gjson.GetBytes(dataPayload, "type").String() == "message_stop") {
 				seenDone = true
 				return true
 			}
@@ -544,7 +561,11 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 		for scanner.Scan() {
 			line := scanner.Bytes()
 			helps.AppendAPIResponseChunk(ctx, e.cfg, line)
-			streamUsage.ObserveOpenAIStream(line)
+			if protocol == "messages" {
+				helps.ObservePluginExecutorStreamUsage("claude", line, &streamUsage)
+			} else {
+				streamUsage.ObserveOpenAIStream(line)
+			}
 			trimmedLine := bytes.TrimSpace(line)
 			if len(trimmedLine) == 0 {
 				if processFrame() {
@@ -969,6 +990,9 @@ func (e *OpenAICompatExecutor) resolveCredentials(auth *cliproxyauth.Auth) (base
 		baseURL = strings.TrimSpace(auth.Attributes["base_url"])
 		apiKey = strings.TrimSpace(auth.Attributes["api_key"])
 	}
+	if strings.EqualFold(auth.Provider, commandcode.Provider) {
+		return commandcode.ProviderBaseURL, commandcode.APIKey(auth)
+	}
 	if opencodego.IsProvider(auth.Provider) {
 		if auth.Metadata != nil {
 			if baseURL == "" {
@@ -987,11 +1011,14 @@ func (e *OpenAICompatExecutor) resolveCredentials(auth *cliproxyauth.Auth) (base
 	return
 }
 
-func (e *OpenAICompatExecutor) openCodeGoProtocol(auth *cliproxyauth.Auth, model string) string {
+func (e *OpenAICompatExecutor) upstreamProtocol(auth *cliproxyauth.Auth, model string) string {
 	if e == nil {
 		return ""
 	}
 	provider := strings.ToLower(strings.TrimSpace(e.provider))
+	if provider == commandcode.Provider {
+		return commandcode.Protocol(model)
+	}
 	if provider != "opencode-go" && !strings.Contains(provider, "opencode-go") {
 		return ""
 	}

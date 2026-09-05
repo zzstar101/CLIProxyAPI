@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/commandcode"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/constant"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/modelconfig"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/opencodego"
@@ -153,6 +154,23 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 			}
 			if authKind == "apikey" {
 				excluded = entry.ExcludedModels
+			}
+		}
+		models = applyExcludedModels(models, excluded)
+	case commandcode.Provider:
+		if snapshot, ok := commandcode.ReadSnapshot(a); ok {
+			overrides := commandcode.Overrides(a)
+			for _, model := range snapshot.Models {
+				if !commandcode.Enabled(snapshot.Account, model, overrides) {
+					continue
+				}
+				modelType := "openai"
+				if commandcode.Protocol(model.ID) == "messages" {
+					modelType = "claude"
+				}
+				// The catalog does not describe thinking capabilities. Use the existing
+				// unvalidated-model path rather than silently stripping explicit intent.
+				models = append(models, &ModelInfo{ID: model.ID, Object: "model", OwnedBy: model.OwnedBy, DisplayName: model.Name, ContextLength: model.ContextLength, Type: modelType, UserDefined: true})
 			}
 		}
 		models = applyExcludedModels(models, excluded)

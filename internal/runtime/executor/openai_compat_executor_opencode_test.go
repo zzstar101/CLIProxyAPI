@@ -29,10 +29,10 @@ func TestOpenCodeGoExecutorSelectsNativeModelProtocol(t *testing.T) {
 	executor := NewOpenCodeGoExecutor(nil)
 	auth := &cliproxyauth.Auth{Provider: opencodego.ProviderName}
 
-	if got := executor.openCodeGoProtocol(auth, "gpt-5.6-luna"); got != "responses" {
+	if got := executor.upstreamProtocol(auth, "gpt-5.6-luna"); got != "responses" {
 		t.Fatalf("gpt protocol = %q, want responses", got)
 	}
-	if got := executor.openCodeGoProtocol(auth, "deepseek-v4-pro"); got != "chat" {
+	if got := executor.upstreamProtocol(auth, "deepseek-v4-pro"); got != "chat" {
 		t.Fatalf("deepseek protocol = %q, want chat", got)
 	}
 }

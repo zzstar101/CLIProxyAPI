@@ -40,6 +40,7 @@ const attemptMaxIdleTime = 2 * time.Hour
 type Handler struct {
 	cfg                     *config.Config
 	configFilePath          string
+	commandCodeMu           sync.Mutex
 	mu                      sync.Mutex
 	reloadMu                sync.Mutex
 	reloadGeneration        uint64

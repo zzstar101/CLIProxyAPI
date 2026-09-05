@@ -485,6 +485,12 @@ func convertOpenAIResponsesRequestToClaude(modelName string, inputRawJSON []byte
 			return true
 		})
 	}
+	// Responses also accepts a plain string as a single user input message.
+	if input := root.Get("input"); input.Type == gjson.String {
+		part := []byte(`{"type":"text","text":""}`)
+		part, _ = sjson.SetBytes(part, "text", input.String())
+		appendParts("user", part)
+	}
 	flushPendingMessage()
 	hadMessages := len(messageBlocks) > 0
 	if !preserveEmptyThinkingBlocks {

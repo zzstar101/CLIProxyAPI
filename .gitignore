@@ -30,6 +30,8 @@ auths/*
 
 # Documentation
 docs/*
+!docs/command-code.md
+!docs/command-code-acceptance.md
 AGENTS.md
 CLAUDE.md
 GEMINI.md
