@@ -2,7 +2,13 @@
 
 Command Code is a native `command-code` provider backed by API-key-authenticated
 subscription model service. It does not run the Command Code CLI or retain web
-sessions. The management panel entry is **AI providers → Command Code**.
+sessions. Import accounts from **OAuth login → Command Code** (manual API keys,
+not an OAuth browser flow). Single and batch imports create standard auth files
+in **Credential management**, alongside Codex and Claude. Open a credential's
+**Command Code quota and models** action to refresh quota, edit its label/key or
+configure per-account model eligibility. No credential migration is required.
+The old `/ai-providers/command-code` panel URL redirects to
+`/accounts/command-code`; AI providers is no longer the import entry point.
 
 ## Accounts
 
