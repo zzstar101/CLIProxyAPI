@@ -6,9 +6,9 @@ import "strings"
 func PublicModelID(id string) string {
 	_, leaf, found := strings.Cut(id, "/")
 	if found {
-		return leaf
+		return strings.ToLower(leaf)
 	}
-	return id
+	return strings.ToLower(id)
 }
 
 // ResolveModel fails closed on collisions, regardless of either model's current eligibility.
