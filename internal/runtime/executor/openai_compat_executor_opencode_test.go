@@ -4,6 +4,9 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/google/uuid"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/opencodego"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/tidwall/gjson"
@@ -72,5 +75,27 @@ func TestOpenCodeGoExecutorForwardsStableSessionHeader(t *testing.T) {
 	executor.applyOpenCodeGoSessionHeader(outgoing, incoming, nil)
 	if got := outgoing.Get("x-opencode-session"); got != "explicit-session" {
 		t.Fatalf("explicit x-opencode-session was overwritten: %q", got)
+	}
+
+	metadata := map[string]any{cliproxyexecutor.ExecutionSessionMetadataKey: "conversation-a"}
+	first, second := make(http.Header), make(http.Header)
+	executor.applyOpenCodeGoSessionHeader(first, nil, nil, metadata)
+	executor.applyOpenCodeGoSessionHeader(second, nil, nil, metadata)
+	if first.Get("x-opencode-session") == "" || first.Get("x-opencode-session") != second.Get("x-opencode-session") {
+		t.Fatal("execution session must generate a stable provider session")
+	}
+	first, second = make(http.Header), make(http.Header)
+	executor.applyOpenCodeGoSessionHeader(first, nil, nil)
+	executor.applyOpenCodeGoSessionHeader(second, nil, nil)
+	if _, err := uuid.Parse(first.Get("x-opencode-session")); err != nil {
+		t.Fatalf("missing valid fallback session: %v", err)
+	}
+	if first.Get("x-opencode-session") == second.Get("x-opencode-session") {
+		t.Fatal("unrelated sessionless requests must not share a fallback session")
+	}
+	other := make(http.Header)
+	NewOpenAICompatExecutor("other-provider", nil).applyOpenCodeGoSessionHeader(other, nil, nil)
+	if other.Get("x-opencode-session") != "" {
+		t.Fatal("session header leaked to another provider")
 	}
 }

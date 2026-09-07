@@ -184,7 +184,7 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 		attrs = auth.Attributes
 	}
 	util.ApplyCustomHeadersFromAttrs(httpReq, attrs, opts.Headers)
-	e.applyOpenCodeGoSessionHeader(httpReq.Header, opts.Headers, translated)
+	e.applyOpenCodeGoSessionHeader(httpReq.Header, opts.Headers, translated, opts.Metadata, req.Metadata)
 	if protocol == "messages" && httpReq.Header.Get("anthropic-version") == "" {
 		httpReq.Header.Set("anthropic-version", "2023-06-01")
 	}
@@ -434,7 +434,7 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 		attrs = auth.Attributes
 	}
 	util.ApplyCustomHeadersFromAttrs(httpReq, attrs, opts.Headers)
-	e.applyOpenCodeGoSessionHeader(httpReq.Header, opts.Headers, translated)
+	e.applyOpenCodeGoSessionHeader(httpReq.Header, opts.Headers, translated, opts.Metadata, req.Metadata)
 	if protocol == "messages" && httpReq.Header.Get("anthropic-version") == "" {
 		httpReq.Header.Set("anthropic-version", "2023-06-01")
 	}
@@ -1071,7 +1071,7 @@ func (e *OpenAICompatExecutor) normalizeOpenCodeGoChatRoles(payload []byte, prot
 	return payload
 }
 
-func (e *OpenAICompatExecutor) applyOpenCodeGoSessionHeader(outgoing http.Header, incoming http.Header, payload []byte) {
+func (e *OpenAICompatExecutor) applyOpenCodeGoSessionHeader(outgoing http.Header, incoming http.Header, payload []byte, metadataSets ...map[string]any) {
 	if e == nil || e.provider != opencodego.ProviderName || outgoing == nil {
 		return
 	}
@@ -1085,6 +1085,7 @@ func (e *OpenAICompatExecutor) applyOpenCodeGoSessionHeader(outgoing http.Header
 		incoming.Get("X-Session-Id"),
 		incoming.Get("Thread-Id"),
 		gjson.GetBytes(payload, "prompt_cache_key").String(),
+		helps.ProviderSessionUUID(opencodego.ProviderName, metadataSets...),
 	}
 	for _, candidate := range candidates {
 		sessionID := strings.TrimSpace(candidate)
@@ -1094,6 +1095,9 @@ func (e *OpenAICompatExecutor) applyOpenCodeGoSessionHeader(outgoing http.Header
 		outgoing.Set("x-opencode-session", sessionID)
 		return
 	}
+	// Requests without a recoverable conversation identity still require a routing
+	// session. Never share a constant or account-wide session across unrelated users.
+	outgoing.Set("x-opencode-session", uuid.NewString())
 }
 
 func (e *OpenAICompatExecutor) resolveCompatConfig(auth *cliproxyauth.Auth) *config.OpenAICompatibility {
