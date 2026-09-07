@@ -170,7 +170,11 @@ func (s *Service) registerModelsForAuthWithCache(ctx context.Context, a *coreaut
 				}
 				// The catalog does not describe thinking capabilities. Use the existing
 				// unvalidated-model path rather than silently stripping explicit intent.
-				models = append(models, &ModelInfo{ID: model.ID, Object: "model", OwnedBy: model.OwnedBy, DisplayName: model.Name, ContextLength: model.ContextLength, Type: modelType, UserDefined: true})
+				publicID := commandcode.PublicModelID(model.ID)
+				if _, unique := commandcode.ResolveModel(snapshot.Models, publicID); !unique {
+					continue
+				}
+				models = append(models, &ModelInfo{ID: publicID, Object: "model", OwnedBy: model.OwnedBy, DisplayName: model.Name, ContextLength: model.ContextLength, Type: modelType, UserDefined: true})
 			}
 		}
 		models = applyExcludedModels(models, excluded)

@@ -50,6 +50,14 @@ vendors default to enabled, subject to entitlements. Explicit choices survive
 catalog refresh. Additional upstream balance can unlock models just as in the
 CLI; it never bypasses an explicit account-level disable.
 
+Command Code registers bare public IDs: for example, clients request `glm-5.3`,
+while an execution routed to Command Code sends `zai_org/glm-5.3`. Only the vendor
+namespace is removed; the catalog retains the exact upstream ID. Other providers
+are unchanged. Namespaced Command Code IDs are not separately advertised. If
+multiple catalog entries collapse to one public ID, that ambiguous ID is not
+registered and cannot execute through Command Code. Overrides remain keyed by
+upstream ID, so existing account choices require no migration.
+
 Models participate in the existing same-ID mixed-provider routing, configured
 round-robin/fill-first selection, retry/cooling rules and session affinity. This
 provider does not introduce an independent scheduler. Existing global exclusions

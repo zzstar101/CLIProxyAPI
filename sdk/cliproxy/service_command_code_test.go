@@ -68,7 +68,7 @@ func TestCommandCodeRegistrationUsesAccountPolicyAndNativeExecutor(t *testing.T)
 	if models := reg.GetModelsForClient(auth.ID); len(models) != 2 {
 		t.Fatalf("default model count=%d", len(models))
 	}
-	body, err := thinking.ApplyThinking([]byte(`{"reasoning_effort":"none"}`), "deepseek/deepseek-v4-flash", "openai", "openai", commandcode.Provider)
+	body, err := thinking.ApplyThinking([]byte(`{"reasoning_effort":"none"}`), "deepseek-v4-flash", "openai", "openai", commandcode.Provider)
 	if err != nil || gjson.GetBytes(body, "reasoning_effort").String() != "none" {
 		t.Fatalf("unknown thinking capability stripped explicit user intent: %s, %v", body, err)
 	}
@@ -78,7 +78,7 @@ func TestCommandCodeRegistrationUsesAccountPolicyAndNativeExecutor(t *testing.T)
 	for _, model := range reg.GetModelsForClient(auth.ID) {
 		ids[model.ID] = true
 	}
-	if !ids["claude-sonnet-5"] || ids["deepseek/deepseek-v4-flash"] || !ids["new-owner/new-model"] {
+	if !ids["claude-sonnet-5"] || ids["deepseek-v4-flash"] || !ids["new-model"] || ids["new-owner/new-model"] {
 		t.Fatalf("account overrides not registered: %v", ids)
 	}
 	auth.Disabled = true

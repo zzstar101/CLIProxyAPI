@@ -164,6 +164,10 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 		translated = sanitizeOpenAIResponsesReasoningEncryptedContent(ctx, "openai compat executor", translated)
 	}
 	reporter.SetTranslatedReasoningEffort(translated, to.String())
+	translated, err = e.commandCodeUpstreamModel(auth, baseModel, translated)
+	if err != nil {
+		return resp, err
+	}
 
 	url := strings.TrimSuffix(baseURL, "/") + endpoint
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(translated))
@@ -404,6 +408,10 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 		translated = updated
 	}
 	reporter.SetTranslatedReasoningEffort(translated, to.String())
+	translated, err = e.commandCodeUpstreamModel(auth, baseModel, translated)
+	if err != nil {
+		return nil, err
+	}
 
 	endpoint := "/chat/completions"
 	if protocol == "responses" {

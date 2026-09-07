@@ -122,7 +122,7 @@ func TestCommandCodeExecutorProtocolAndAccountGate(t *testing.T) {
 					return &http.Response{StatusCode: 200, Header: header, Body: io.NopCloser(strings.NewReader(response)), Request: r}, nil
 				})
 				ctx := context.WithValue(t.Context(), "cliproxy.roundtripper", http.RoundTripper(transport))
-				req := coreexecutor.Request{Model: model, Payload: []byte(tc.payload)}
+				req := coreexecutor.Request{Model: commandcode.PublicModelID(model), Payload: []byte(strings.ReplaceAll(tc.payload, model, commandcode.PublicModelID(model)))}
 				if stream {
 					req.Payload, _ = sjson.SetBytes(req.Payload, "stream", true)
 				}

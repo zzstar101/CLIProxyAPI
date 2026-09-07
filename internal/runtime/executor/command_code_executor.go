@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/tidwall/sjson"
+
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/commandcode"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
@@ -27,13 +29,26 @@ func (e *CommandCodeExecutor) validate(auth *coreauth.Auth, req coreexecutor.Req
 		return statusErr{code: http.StatusServiceUnavailable, msg: "command-code: account discovery is required"}
 	}
 	modelID := thinking.ParseSuffix(req.Model).ModelName
-	for _, model := range snapshot.Models {
-		if model.ID == modelID && commandcode.Enabled(snapshot.Account, model, commandcode.Overrides(auth)) {
-			return nil
-		}
+	if model, unique := commandcode.ResolveModel(snapshot.Models, modelID); unique && commandcode.Enabled(snapshot.Account, model, commandcode.Overrides(auth)) {
+		return nil
 	}
 	return statusErr{code: http.StatusForbidden, msg: "command-code: model is disabled or unavailable for this account"}
 }
+
+// commandCodeUpstreamModel runs after translation and payload configuration, so
+// client-facing IDs, thinking suffixes and scheduling remain provider-independent.
+func (e *OpenAICompatExecutor) commandCodeUpstreamModel(auth *coreauth.Auth, publicID string, payload []byte) ([]byte, error) {
+	if auth == nil || auth.Provider != commandcode.Provider {
+		return payload, nil
+	}
+	snapshot, ok := commandcode.ReadSnapshot(auth)
+	model, unique := commandcode.ResolveModel(snapshot.Models, publicID)
+	if !ok || !unique || !commandcode.Enabled(snapshot.Account, model, commandcode.Overrides(auth)) {
+		return nil, statusErr{code: http.StatusForbidden, msg: "command-code: model is disabled or unavailable for this account"}
+	}
+	return sjson.SetBytes(payload, "model", model.ID)
+}
+
 func (e *CommandCodeExecutor) Execute(ctx context.Context, auth *coreauth.Auth, req coreexecutor.Request, opts coreexecutor.Options) (coreexecutor.Response, error) {
 	if err := e.validate(auth, req, opts); err != nil {
 		return coreexecutor.Response{}, err
