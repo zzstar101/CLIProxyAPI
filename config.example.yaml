@@ -257,6 +257,14 @@ codex:
   # reverse-proxy read timeouts (e.g. nginx proxy_read_timeout) on long reasoning requests.
   # Default: false
   stream-bootstrap-buffering: false
+  # Forward the downstream client's sticky-routing token (x-codex-turn-state, in both the
+  # header and client_metadata) to the upstream. The official Codex client mints this token
+  # per turn and replays it within that turn; a proxy that pools accounts cannot honour that
+  # contract. A stale token pins the request to the shard that minted it, which after a
+  # failover or an overload means the wrong/loaded backend. When false (default) the token is
+  # dropped, so the upstream makes a fresh routing decision on every attempt, including
+  # server_is_overloaded retries.
+  forward-turn-state: false
   # When true, optimize Codex Desktop, codex-tui, and codex_cli_rs requests for multi-agent v2.
   # This refreshes Codex spawn_agent model details, removes message parameter encryption,
   # normalizes encrypted agent_message content for Codex, and converts agent_message input
@@ -616,9 +624,14 @@ nonstream-keepalive-interval: 0
 # These are used only for file-backed/OAuth Codex requests when the client
 # does not send the header. `user-agent` applies to HTTP and websocket requests;
 # `beta-features` only applies to websocket requests. They do not apply to codex-api-key entries.
+# The official Codex client sends only `user-agent` + `originator` (no `Version`
+# header). `originator` is derived from the user-agent name segment here so the
+# pair can never disagree. `version` is optional and off by default: set it only
+# if you deliberately want to emit a `Version` header.
 # codex-header-defaults:
-#   user-agent: "codex_cli_rs/0.114.0 (Mac OS 14.2.0; x86_64) vscode/1.111.0"
+#   user-agent: "codex_cli_rs/0.153.4 (Mac OS 26.5.2; arm64) iTerm.app/3.6.10"
 #   beta-features: "multi_agent"
+#   version: "0.153.4" # optional; official Codex does NOT send a Version header
 
 # OpenAI compatibility providers
 # OpenCode Go uses the same OpenAI-compatible block. Run `-opencode-go-login` to

@@ -18,12 +18,13 @@ import (
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
+	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
 
 const (
-	codexUserAgent             = "codex-tui/0.146.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.146.0)"
+	codexUserAgent             = "codex-tui/0.153.4 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.153.4)"
 	codexOriginator            = "codex-tui"
 	codexDefaultImageToolModel = "gpt-image-2"
 	codexResponsesLiteHeader   = "X-OpenAI-Internal-Codex-Responses-Lite"
@@ -156,7 +157,29 @@ func (e *CodexExecutor) cacheHelper(ctx context.Context, from sdktranslator.Form
 	return httpReq, rawJSON, identityState, nil
 }
 
+// applyCodexTurnStatePolicy drops the sticky-routing token
+// (client_metadata["x-codex-turn-state"]) from the outbound body unless
+// forwarding is explicitly enabled. The token pins a request to a specific
+// upstream shard; a stale token (minted for another account, or for a shard that
+// has since become overloaded) must not be replayed. Dropping it forces the
+// upstream to make a fresh routing decision on every attempt, including
+// server_is_overloaded retries.
+func applyCodexTurnStatePolicy(cfg *config.Config, body []byte) []byte {
+	if cfg != nil && cfg.Codex.ForwardTurnState {
+		return body
+	}
+	if len(body) == 0 || !bytes.Contains(body, []byte("x-codex-turn-state")) {
+		return body
+	}
+	updated, err := sjson.DeleteBytes(body, "client_metadata.x-codex-turn-state")
+	if err != nil {
+		return body
+	}
+	return updated
+}
+
 func applyCodexIdentityConfuseBody(cfg *config.Config, auth *cliproxyauth.Auth, userPayload []byte, rawJSON []byte) ([]byte, codexIdentityConfuseState) {
+	rawJSON = applyCodexTurnStatePolicy(cfg, rawJSON)
 	if !codexIdentityConfuseEnabled(cfg) || auth == nil || strings.TrimSpace(auth.ID) == "" || len(rawJSON) == 0 {
 		return rawJSON, codexIdentityConfuseState{}
 	}
@@ -366,15 +389,57 @@ func applyCodexHeadersFromSources(r *http.Request, auth *cliproxyauth.Auth, toke
 		attrs = auth.Attributes
 	}
 	util.ApplyCustomHeadersFromAttrs(r, attrs, ginHeaders)
-	applyCodexCloakingHeaders(r.Header, cfg)
+	applyCodexCloakingHeaders(r.Header, cfg, auth)
 }
 
-func applyCodexCloakingHeaders(headers http.Header, cfg *config.Config) {
+// codexIdentityFromUserAgent splits a Codex client User-Agent into its
+// originator (client name) and version, e.g.
+//
+//	"codex-tui/0.146.0 (Mac OS ...)" -> "codex-tui", "0.146.0"
+//	"codex_cli_rs/0.114.0 (...)"     -> "codex_cli_rs", "0.114.0"
+func codexIdentityFromUserAgent(userAgent string) (originator, version string) {
+	fields := strings.Fields(strings.TrimSpace(userAgent))
+	if len(fields) == 0 {
+		return "", ""
+	}
+	nameVersion := fields[0]
+	if idx := strings.Index(nameVersion, "/"); idx > 0 {
+		return nameVersion[:idx], strings.TrimSpace(nameVersion[idx+1:])
+	}
+	return nameVersion, ""
+}
+
+// applyCodexCloakingHeaders forces one self-consistent Codex client identity on
+// the outgoing request. The official Codex client sends only a `User-Agent` and
+// an `originator` (see codex-rs/login/src/auth/default_client.rs); this honours
+// codex-header-defaults.user-agent when set and derives `originator` from the
+// User-Agent's name segment so the pair can never disagree. A stale or
+// third-party identity lets the upstream deprioritise the request (in-stream
+// server_is_overloaded).
+func applyCodexCloakingHeaders(headers http.Header, cfg *config.Config, auth *cliproxyauth.Auth) {
 	if headers == nil || cfg == nil || cfg.Codex.DisableCodexCloaking {
 		return
 	}
-	headers.Set("User-Agent", codexUserAgent)
-	headers.Set("Originator", codexOriginator)
+	userAgent, _ := codexHeaderDefaults(cfg, auth)
+	if strings.TrimSpace(userAgent) == "" {
+		userAgent = codexUserAgent
+	}
+	originator, _ := codexIdentityFromUserAgent(userAgent)
+	if originator == "" {
+		originator = codexOriginator
+	}
+	headers.Set("User-Agent", userAgent)
+	headers.Set("Originator", originator)
+	// The official Codex client (login/default_client.rs) only sends a
+	// `User-Agent` and an `originator`; it has no outbound `Version` header.
+	// Only emit one when explicitly configured, otherwise drop any
+	// downstream-supplied value so the identity matches a real client.
+	if version := strings.TrimSpace(cfg.CodexHeaderDefaults.Version); version != "" {
+		headers.Set("Version", version)
+	} else {
+		headers.Del("Version")
+	}
+	log.Debugf("codex outbound identity: user-agent=%q originator=%q version=%q", userAgent, originator, headers.Get("Version"))
 }
 
 func normalizeCodexInstructions(body []byte) []byte {

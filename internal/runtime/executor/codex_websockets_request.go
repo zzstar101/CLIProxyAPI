@@ -84,7 +84,13 @@ func applyCodexWebsocketHeaders(ctx context.Context, headers http.Header, auth *
 	isAPIKey := codexAuthUsesAPIKey(auth)
 	cfgUserAgent, cfgBetaFeatures := codexHeaderDefaults(cfg, auth)
 	ensureHeaderWithPriority(headers, ginHeaders, "x-codex-beta-features", cfgBetaFeatures, "")
-	misc.EnsureHeader(headers, ginHeaders, "x-codex-turn-state", "")
+	// x-codex-turn-state is a sticky-routing token minted by the upstream for a
+	// single turn. Forwarding a stale token (from another account, or from a shard
+	// that is now overloaded) pins the request to the wrong/loaded backend, so it
+	// is only forwarded when explicitly enabled (codex.forward-turn-state).
+	if cfg != nil && cfg.Codex.ForwardTurnState {
+		misc.EnsureHeader(headers, ginHeaders, "x-codex-turn-state", "")
+	}
 	misc.EnsureHeader(headers, ginHeaders, "x-codex-turn-metadata", "")
 	misc.EnsureHeader(headers, ginHeaders, "x-client-request-id", "")
 	misc.EnsureHeader(headers, ginHeaders, "x-responsesapi-include-timing-metrics", "")
@@ -128,7 +134,7 @@ func applyCodexWebsocketHeaders(ctx context.Context, headers http.Header, auth *
 		attrs = auth.Attributes
 	}
 	util.ApplyCustomHeadersFromAttrs(&http.Request{Header: headers}, attrs, ginHeaders)
-	applyCodexCloakingHeaders(headers, cfg)
+	applyCodexCloakingHeaders(headers, cfg, auth)
 
 	return headers
 }

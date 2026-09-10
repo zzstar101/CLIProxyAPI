@@ -129,6 +129,10 @@ type ClaudeHeaderDefaults struct {
 type CodexHeaderDefaults struct {
 	UserAgent    string `yaml:"user-agent" json:"user-agent"`
 	BetaFeatures string `yaml:"beta-features" json:"beta-features"`
+	// Version is an optional Codex client version emitted in the upstream `Version`
+	// header. The official Codex client does not send a `Version` header at all, so
+	// this is empty by default and only sent when explicitly configured.
+	Version string `yaml:"version" json:"version"`
 }
 
 // XAIConfig configures provider-wide xAI request behavior.
@@ -156,6 +160,13 @@ type CodexConfig struct {
 	// Trade-off: the response headers are delayed until the upstream starts generating, which can
 	// trip client or reverse-proxy read timeouts. Default is false.
 	StreamBootstrapBuffering bool `yaml:"stream-bootstrap-buffering" json:"stream-bootstrap-buffering"`
+	// ForwardTurnState forwards the downstream client's sticky-routing token
+	// (x-codex-turn-state, in both the header and client_metadata) to the upstream.
+	// The token pins a request to a specific upstream shard. A token minted for a
+	// different account, or for a shard that has since become overloaded, must not
+	// be replayed; dropping it lets the upstream make a fresh routing decision on
+	// every attempt (including server_is_overloaded retries). Default false.
+	ForwardTurnState bool `yaml:"forward-turn-state" json:"forward-turn-state"`
 	// OptimizeMultiAgentV2 optimizes official Codex multi-agent requests.
 	OptimizeMultiAgentV2 bool `yaml:"optimize-multi-agent-v2" json:"optimize-multi-agent-v2"`
 	// OrphanDelegationCompatibility enables opt-in compatibility for orphan Codex delegation outputs.

@@ -1,5 +1,8 @@
 FROM golang:1.26-bookworm AS builder
 
+# 国内网络：Go 模块代理
+ENV GOPROXY=https://goproxy.cn,direct
+
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential git && rm -rf /var/lib/apt/lists/*
@@ -18,7 +21,7 @@ RUN CGO_ENABLED=1 GOOS=linux go build -buildvcs=false -ldflags="-s -w -X 'main.V
 
 FROM debian:bookworm
 
-RUN apt-get update && apt-get install -y --no-install-recommends tzdata ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata ca-certificates wget && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir /CLIProxyAPI
 

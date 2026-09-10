@@ -1114,9 +1114,12 @@ func TestApplyCodexWebsocketHeadersDefaultsToCurrentResponsesBeta(t *testing.T) 
 
 func TestApplyCodexWebsocketHeadersDefaultsToCodexCloaking(t *testing.T) {
 	tests := []struct {
-		name  string
-		auth  *cliproxyauth.Auth
-		token string
+		name           string
+		auth           *cliproxyauth.Auth
+		token          string
+		wantUA         string
+		wantOriginator string
+		wantVersion    string
 	}{
 		{
 			name: "OAuth",
@@ -1127,6 +1130,12 @@ func TestApplyCodexWebsocketHeadersDefaultsToCodexCloaking(t *testing.T) {
 					"header:Originator": "custom-origin",
 				},
 			},
+			// codex-header-defaults.user-agent now takes effect under cloaking;
+			// originator and version are derived from the same source so the
+			// outbound identity stays self-consistent.
+			wantUA:         "config-ua",
+			wantOriginator: "config-ua",
+			wantVersion:    "",
 		},
 		{
 			name: "API key",
@@ -1138,7 +1147,10 @@ func TestApplyCodexWebsocketHeadersDefaultsToCodexCloaking(t *testing.T) {
 					"header:Originator": "custom-origin",
 				},
 			},
-			token: "sk-test",
+			token:          "sk-test",
+			wantUA:         codexUserAgent,
+			wantOriginator: codexOriginator,
+			wantVersion:    "",
 		},
 	}
 
@@ -1157,11 +1169,14 @@ func TestApplyCodexWebsocketHeadersDefaultsToCodexCloaking(t *testing.T) {
 
 			headers = applyCodexWebsocketHeaders(ctx, headers, tt.auth, tt.token, cfg)
 
-			if got := headers.Get("User-Agent"); got != codexUserAgent {
-				t.Fatalf("User-Agent = %q, want %q", got, codexUserAgent)
+			if got := headers.Get("User-Agent"); got != tt.wantUA {
+				t.Fatalf("User-Agent = %q, want %q", got, tt.wantUA)
 			}
-			if got := headers.Get("Originator"); got != codexOriginator {
-				t.Fatalf("Originator = %q, want %q", got, codexOriginator)
+			if got := headers.Get("Originator"); got != tt.wantOriginator {
+				t.Fatalf("Originator = %q, want %q", got, tt.wantOriginator)
+			}
+			if got := headers.Get("Version"); got != tt.wantVersion {
+				t.Fatalf("Version = %q, want %q", got, tt.wantVersion)
 			}
 		})
 	}
